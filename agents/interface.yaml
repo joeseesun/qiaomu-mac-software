@@ -1,0 +1,15 @@
+interface:
+  display_name: "Mac 软件推荐海报"
+  short_description: "在 Mac 本机选软件、提取图标和壁纸、制作并署名分享推荐海报"
+  default_prompt: "用本机已安装的 Mac 软件和当前壁纸做推荐海报，先让我选择应用，生成后给我预览。"
+compatibility:
+  canonical_format: "agent-skills"
+  adapter_targets: ["openai", "claude", "generic", "agent-skills-compatible"]
+  execution:
+    context: "inline"
+    shell: "bash"
+  permissions:
+    network: "Only software.qiaomu.ai after explicit confirmation of the poster, attribution and visibility"
+    file_write: "User output directory"
+    subprocess: "Node.js, mdls, plutil and osascript"
+    interactive: "Use the host AskUser component where available, or chat"

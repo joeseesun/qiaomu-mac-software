@@ -1,0 +1,13 @@
+{
+  "recommended_threshold": 0.90,
+  "positive_concepts": {
+    "mac": ["mac", "macos", "本机"],
+    "apps": ["软件", "应用"],
+    "poster": ["海报", "推荐图"]
+  },
+  "description_required_concepts": ["mac", "apps", "poster"],
+  "negative_patterns": ["只列", "只推荐", "卸载", "windows"],
+  "should_trigger": ["给我做一张 Mac 软件推荐海报", "扫描本机 Mac 软件，用当前壁纸做推荐图", "把本机的应用软件海报署名分享"],
+  "should_not_trigger": ["只列我装的 Mac 软件", "推荐几款 Mac 记笔记软件", "帮我卸载这个 Mac 应用"],
+  "near_neighbor": ["用这个网页的文字做一张海报", "列出 Windows 的应用软件", "换一张 macOS 桌面壁纸"]
+}

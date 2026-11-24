@@ -1,0 +1,89 @@
+{
+  "schema_version": "2.0.0-qiaomu-lite",
+  "generated_at": "2026-11-24",
+  "package": {
+    "name": "qiaomu-mac-software",
+    "version": "0.1.0",
+    "owner": "向阳乔木",
+    "maturity_tier": "production",
+    "lifecycle_stage": null,
+    "upstream_inspiration": null,
+    "upstream_sync": {}
+  },
+  "intent": {
+    "description": "用本机 macOS 应用图标和桌面背景制作 Mac 软件推荐海报。按最近六个月内可见的 Spotlight 活跃天数给出候选，通过 AskUser 交互调整软件、分类和版式，先预览本地高清 PNG，再按用户选择署名分享到 software.qiaomu.ai。适用于“扫描我最常用的 Mac 软件做海报”“用我的壁纸和应用图标做软件推荐图”“把我的软件海报署名发布”。单纯问软件推荐、只想列已安装软件或管理安装包时，不自动启动制作或分享流程。\n",
+    "job_to_be_done": "用本机 macOS 应用图标和桌面背景制作 Mac 软件推荐海报。按最近六个月内可见的 Spotlight 活跃天数给出候选，通过 AskUser 交互调整软件、分类和版式，先预览本地高清 PNG，再按用户选择署名分享到 software.qiaomu.ai。适用于“扫描我最常用的 Mac 软件做海报”“用我的壁纸和应用图标做软件推荐图”“把我的软件海报署名发布”。单纯问软件推荐、只想列已安装软件或管理安装包时，不自动启动制作或分享流程。\n",
+    "target_users": [
+      "Qiaomu operator"
+    ],
+    "inputs": [],
+    "outputs": [],
+    "exclusions": [],
+    "qiaomu_defaults": {}
+  },
+  "triggers": {
+    "should_trigger": [
+      "给我做一张 Mac 软件推荐海报",
+      "扫描本机 Mac 软件，用当前壁纸做推荐图",
+      "把本机的应用软件海报署名分享"
+    ],
+    "should_not_trigger": [
+      "只列我装的 Mac 软件",
+      "推荐几款 Mac 记笔记软件",
+      "帮我卸载这个 Mac 应用"
+    ],
+    "near_neighbor": [
+      "用这个网页的文字做一张海报",
+      "列出 Windows 的应用软件",
+      "换一张 macOS 桌面壁纸"
+    ]
+  },
+  "workflow": {
+    "router_rules": [],
+    "compact_workflow": [],
+    "gate_ladder": [],
+    "output_contract": []
+  },
+  "resources": {
+    "references": [
+      "references/workflow.md"
+    ],
+    "scripts": [],
+    "evals": [
+      "evals/trigger_cases.json"
+    ],
+    "reports": [
+      "reports/creation-handoff.md",
+      "reports/prior-art-research.md"
+    ]
+  },
+  "portability": {
+    "canonical_format": "agent-skills",
+    "adapter_targets": [
+      "openai",
+      "claude",
+      "generic",
+      "agent-skills-compatible"
+    ],
+    "activation": {},
+    "execution": {
+      "context": "inline",
+      "shell": "bash"
+    },
+    "trust": {},
+    "permissions": {
+      "network": "Only software.qiaomu.ai after explicit confirmation of the poster, attribution and visibility",
+      "file_write": "User output directory",
+      "subprocess": "Node.js, mdls, plutil and osascript",
+      "interactive": "Use the host AskUser component where available, or chat"
+    },
+    "degradation": {}
+  },
+  "gates": {},
+  "evidence_boundary": {
+    "generated_reports_are_evidence": true,
+    "planned_work_is_evidence": false,
+    "missing_external_or_human_evidence_label": "missing evidence",
+    "public_claim_policy": "claim only what local validation, install proof, human review, or provider-backed evidence actually supports"
+  }
+}

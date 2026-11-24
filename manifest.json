@@ -1,0 +1,9 @@
+{
+  "name": "qiaomu-mac-software",
+  "version": "0.1.0",
+  "owner": "向阳乔木",
+  "updated_at": "2026-11-24",
+  "status": "active",
+  "maturity_tier": "production",
+  "target_platforms": ["openai", "claude", "generic", "agent-skills-compatible"]
+}
