@@ -3,7 +3,7 @@
   "generated_at": "2026-11-24",
   "package": {
     "name": "qiaomu-mac-software",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "owner": "向阳乔木",
     "maturity_tier": "production",
     "lifecycle_stage": null,
@@ -54,7 +54,9 @@
     ],
     "reports": [
       "reports/creation-handoff.md",
-      "reports/prior-art-research.md"
+      "reports/prior-art-research.md",
+      "reports/skill-ir.json",
+      "reports/trigger-eval.json"
     ]
   },
   "portability": {

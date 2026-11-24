@@ -1,9 +1,21 @@
 {
   "name": "qiaomu-mac-software",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "owner": "向阳乔木",
   "updated_at": "2026-11-24",
   "status": "active",
   "maturity_tier": "production",
-  "target_platforms": ["openai", "claude", "generic", "agent-skills-compatible"]
+  "target_platforms": [
+    "openai",
+    "claude",
+    "generic",
+    "agent-skills-compatible"
+  ],
+  "release_gates": [
+    "package_validation",
+    "trigger_eval",
+    "live_macos_scan_and_render",
+    "clean_install",
+    "live_share_and_withdrawal"
+  ]
 }

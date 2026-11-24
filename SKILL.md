@@ -5,7 +5,7 @@ description: |
 compatibility: macOS 本机，Node.js 20+，可执行 osascript 的桌面会话
 metadata:
   author: 向阳乔木
-  version: "0.1.0"
+  version: "0.1.1"
 ---
 
 # Mac 软件推荐海报

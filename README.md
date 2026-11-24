@@ -12,7 +12,7 @@
 npx skills add joeseesun/qiaomu-mac-software --skill qiaomu-mac-software
 ```
 
-安装后可以直接说：
+安装后你可以直接这样说。
 
 - “扫一下我 Mac 最近六个月常用的软件，用当前壁纸做一张推荐海报。”
 - “先给我看候选。把 Claude Code 加上，去掉不想推荐的，再让我预览。”
@@ -27,7 +27,13 @@ npx skills add joeseesun/qiaomu-mac-software --skill qiaomu-mac-software
 
 Spotlight 的范围取决于这台 Mac 能提供的记录。候选反映过去六个月窗口内的**可见活跃天数**，实际记录可能更短。未记录的应用也可以手选。应用安装路径、时间和原始壁纸文件留在本机。成图会包含壁纸，请在分享前看一眼。只做本地海报不需要访问网站。
 
+## 常见问题 (Troubleshooting)
+
 遇到应用装在其他目录、系统壁纸不可读或想手动运行脚本，可查看[工作流与边界](references/workflow.md)。
+
+## 本地验证
+
+在 macOS 上可先运行 `node --check scripts/macos.mjs`，再执行 `node scripts/macos.mjs scan --dir "$(mktemp -d)"`。维护者可用乔木 meta skill 的 `validate_skill.py` 复核文档、版本与证据。
 
 网站源码：[qiaomu-software](https://github.com/joeseesun/qiaomu-software)。本技能采用 MIT 许可，示例中的软件图标属于各自权利人。
 
