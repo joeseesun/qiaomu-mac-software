@@ -1,0 +1,143 @@
+{
+  "ok": true,
+  "threshold": 0.9,
+  "description_concepts": [
+    "apps",
+    "mac",
+    "poster"
+  ],
+  "missing_description_concepts": [],
+  "summary": {
+    "total": 9,
+    "passed": 9,
+    "false_positive": 0,
+    "false_negative": 0,
+    "pass_rate": 1.0
+  },
+  "failures": [],
+  "results": {
+    "should_trigger": [
+      {
+        "prompt": "给我做一张 Mac 软件推荐海报",
+        "family": "default",
+        "expected_trigger": true,
+        "predicted_trigger": true,
+        "passed": true,
+        "score": 1.0,
+        "matched_concepts": [
+          "apps",
+          "mac",
+          "poster"
+        ],
+        "negative_pattern": null
+      },
+      {
+        "prompt": "扫描本机 Mac 软件，用当前壁纸做推荐图",
+        "family": "default",
+        "expected_trigger": true,
+        "predicted_trigger": true,
+        "passed": true,
+        "score": 1.0,
+        "matched_concepts": [
+          "apps",
+          "mac",
+          "poster"
+        ],
+        "negative_pattern": null
+      },
+      {
+        "prompt": "把本机的应用软件海报署名分享",
+        "family": "default",
+        "expected_trigger": true,
+        "predicted_trigger": true,
+        "passed": true,
+        "score": 1.0,
+        "matched_concepts": [
+          "apps",
+          "mac",
+          "poster"
+        ],
+        "negative_pattern": null
+      }
+    ],
+    "should_not_trigger": [
+      {
+        "prompt": "只列我装的 Mac 软件",
+        "family": "default",
+        "expected_trigger": false,
+        "predicted_trigger": false,
+        "passed": true,
+        "score": 0.667,
+        "matched_concepts": [
+          "apps",
+          "mac"
+        ],
+        "negative_pattern": "只列"
+      },
+      {
+        "prompt": "推荐几款 Mac 记笔记软件",
+        "family": "default",
+        "expected_trigger": false,
+        "predicted_trigger": false,
+        "passed": true,
+        "score": 0.667,
+        "matched_concepts": [
+          "apps",
+          "mac"
+        ],
+        "negative_pattern": null
+      },
+      {
+        "prompt": "帮我卸载这个 Mac 应用",
+        "family": "default",
+        "expected_trigger": false,
+        "predicted_trigger": false,
+        "passed": true,
+        "score": 0.667,
+        "matched_concepts": [
+          "apps",
+          "mac"
+        ],
+        "negative_pattern": "卸载"
+      }
+    ],
+    "near_neighbor": [
+      {
+        "prompt": "用这个网页的文字做一张海报",
+        "family": "default",
+        "expected_trigger": false,
+        "predicted_trigger": false,
+        "passed": true,
+        "score": 0.333,
+        "matched_concepts": [
+          "poster"
+        ],
+        "negative_pattern": null
+      },
+      {
+        "prompt": "列出 Windows 的应用软件",
+        "family": "default",
+        "expected_trigger": false,
+        "predicted_trigger": false,
+        "passed": true,
+        "score": 0.333,
+        "matched_concepts": [
+          "apps"
+        ],
+        "negative_pattern": "windows"
+      },
+      {
+        "prompt": "换一张 macOS 桌面壁纸",
+        "family": "default",
+        "expected_trigger": false,
+        "predicted_trigger": false,
+        "passed": true,
+        "score": 0.333,
+        "matched_concepts": [
+          "mac"
+        ],
+        "negative_pattern": null
+      }
+    ]
+  }
+}
