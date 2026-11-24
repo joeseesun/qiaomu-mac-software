@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
+import { createServer } from 'node:http';
 import { constants } from 'node:fs';
 import { access, copyFile, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -80,8 +81,11 @@ async function readApp(path, cutoff, end) {
     const { stdout } = await exec('/usr/bin/plutil', ['-extract', 'CFBundleIdentifier', 'raw', plist], { timeout: 3000 });
     const id = stdout.trim();
     if (!id) return null;
-    const name = basename(path).replace(/\.app$/i, '');
-    const data = await readMetadata(path, ['kMDItemUsedDates', 'kMDItemLastUsedDate']);
+    const fallback = basename(path).replace(/\.app$/i, '');
+    const data = await readMetadata(path, ['kMDItemUsedDates', 'kMDItemLastUsedDate', 'kMDItemDisplayName']);
+    // Spotlight's display name follows the system language, so Chinese systems get 腾讯会议 rather than TencentMeeting.
+    const display = data.match(/^kMDItemDisplayName\s*=\s*"(.+)"$/m)?.[1].replace(/\.app$/i, '').trim();
+    const name = display || fallback;
     const last = data.match(/^kMDItemLastUsedDate\s*=\s*(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d [+-]\d{4})/m)?.[1];
     const lastDate = last ? localDay(last) : null;
     const observedDays = [...new Set(
@@ -202,6 +206,329 @@ async function exportIcons(apps, folder) {
   }
 }
 
+// Serves a local picker page so people can choose apps with their real icons, adjust groups and write reasons.
+// Everything stays on this machine; saving only rewrites selection.json.
+async function pick(values) {
+  const dir = resolve(values.dir ?? '.');
+  const inventory = JSON.parse(await readFile(join(dir, 'inventory.json'), 'utf8').catch(() => {
+    throw new Error('没有找到 inventory.json，请先运行 scan。');
+  }));
+  const apps = Array.isArray(inventory.apps) ? inventory.apps : [];
+  if (!apps.length) throw new Error('inventory.json 中没有应用。');
+  const iconDir = join(dir, 'picker-icons');
+  await mkdir(iconDir, { recursive: true });
+  const list = apps.map((app, index) => ({ path: app.path, file: index + '.png' }));
+  await exec('/usr/bin/osascript', ['-l', 'JavaScript', join(scriptDir, 'icons.js'), JSON.stringify(list), iconDir, '96'], { timeout: 180000 }).catch(() => {});
+  let previous = {};
+  try { previous = JSON.parse(await readFile(join(dir, 'selection.json'), 'utf8')); } catch {}
+  const payload = {
+    title: typeof previous.title === 'string' ? previous.title : '我推荐的 Mac 软件',
+    year: previous.year === null || previous.year === false ? 0 : (Number(previous.year) || new Date().getFullYear()),
+    author: typeof previous.author === 'string' ? previous.author : '',
+    apps: apps.map((app, index) => ({ index, id: app.id, name: app.name, group: app.group, activeDays: app.activeDays ?? 0 })),
+    selected: Array.isArray(previous.apps) ? previous.apps.map(app => ({ id: app.id, group: app.group, note: app.note ?? '' })) : [],
+  };
+  const token = randomBytes(12).toString('hex');
+  let settle;
+  const done = new Promise((resolvePromise, rejectPromise) => { settle = { resolve: resolvePromise, reject: rejectPromise }; });
+  const timer = setTimeout(() => settle.reject(new Error('等待保存超时（30 分钟）。')), 30 * 60 * 1000);
+  const server = createServer((req, res) => {
+    const url = new URL(req.url, 'http://127.0.0.1');
+    if (url.searchParams.get('token') !== token) { res.writeHead(403).end('forbidden'); return; }
+    if (req.method === 'GET' && url.pathname === '/') {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      res.end(pickerPage(payload, token));
+      return;
+    }
+    const iconMatch = url.pathname.match(/^\/icon\/(\d{1,4})\.png$/);
+    if (req.method === 'GET' && iconMatch) {
+      readFile(join(iconDir, iconMatch[1] + '.png')).then(bytes => {
+        res.writeHead(200, { 'content-type': 'image/png', 'cache-control': 'immutable' });
+        res.end(bytes);
+      }, () => res.writeHead(404).end());
+      return;
+    }
+    if (req.method === 'POST' && url.pathname === '/save') {
+      let body = '';
+      req.on('data', chunk => { body += chunk; if (body.length > 262144) req.destroy(); });
+      req.on('end', async () => {
+        try {
+          const input = JSON.parse(body);
+          const byIndex = new Map(apps.map((app, index) => [index, app]));
+          const seen = new Set();
+          const chosen = [];
+          for (const item of Array.isArray(input.apps) ? input.apps : []) {
+            const app = byIndex.get(Number(item.index));
+            if (!app || seen.has(app.id)) continue;
+            seen.add(app.id);
+            chosen.push({ id: app.id, name: app.name, path: app.path,
+              group: String(item.group ?? '').trim() || app.group,
+              ...(String(item.note ?? '').trim() ? { note: String(item.note).trim() } : {}) });
+          }
+          const selection = { title: String(input.title ?? '').trim() || '我推荐的 Mac 软件',
+            year: Number(input.year) > 0 ? Number(input.year) : null,
+            ...(String(input.author ?? '').trim() ? { author: String(input.author).trim() } : {}),
+            apps: chosen };
+          const temp = join(dir, '.selection-check.json');
+          await writeFile(temp, JSON.stringify(selection));
+          const checked = await readSelection(temp).finally(() => rm(temp, { force: true }));
+          const finalSelection = { title: checked.title, year: checked.year || null,
+            ...(checked.author ? { author: checked.author } : {}), apps: checked.apps };
+          await writeFile(join(dir, 'selection.json'), JSON.stringify(finalSelection, null, 2) + '\n', { mode: 0o600 });
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, apps: checked.apps.length }));
+          clearTimeout(timer);
+          server.close();
+          settle.resolve({ saved: join(dir, 'selection.json'), apps: checked.apps.length,
+            notes: checked.apps.filter(app => app.note).length });
+        } catch (error) {
+          res.writeHead(400, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: error.message }));
+        }
+      });
+      return;
+    }
+    res.writeHead(404).end();
+  });
+  await new Promise((ok, fail) => { server.once('error', fail); server.listen(0, '127.0.0.1', ok); });
+  console.log(JSON.stringify({ url: 'http://127.0.0.1:' + server.address().port + '/?token=' + token, waiting: true }));
+  console.log(JSON.stringify(await done));
+}
+
+function pickerPage(payload, token) {
+  const data = JSON.stringify(payload).replace(/</g, '\\u003c');
+  return `<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>挑选要推荐的软件</title>
+<style>
+:root{color-scheme:dark;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif}
+*{box-sizing:border-box}
+body{margin:0;background:#0c0e12;color:rgba(255,255,255,.88);font-size:15px;line-height:1.6}
+.wrap{width:min(1080px,calc(100% - 32px));margin-inline:auto}
+.bar{position:sticky;top:0;z-index:10;background:rgba(12,14,18,.85);backdrop-filter:blur(14px);border-bottom:1px solid rgba(255,255,255,.09)}
+.bar-in{display:flex;align-items:center;gap:14px;min-height:60px}
+h1{font-size:1.1rem;margin:0;font-weight:600;color:#fff}
+.count{margin-left:auto;color:rgba(255,255,255,.66);font-variant-numeric:tabular-nums;white-space:nowrap}
+.save{border:0;border-radius:999px;background:linear-gradient(180deg,#ffc463,#ffa628);color:#241503;font-weight:600;font-size:.92rem;padding:8px 18px;cursor:pointer;white-space:nowrap}
+.save:disabled{opacity:.55;cursor:progress}
+main{padding:20px 0 120px}
+.panel{display:flex;flex-wrap:wrap;gap:14px 24px;padding:16px 18px;border:1px solid rgba(255,255,255,.09);border-radius:14px;background:#171a21;margin-bottom:14px}
+.panel label{display:grid;gap:4px;font-size:.82rem;color:rgba(255,255,255,.62)}
+input[type=text],input[type=number],input[type=search]{background:#20242e;border:1px solid rgba(255,255,255,.14);border-radius:9px;color:#fff;padding:7px 11px;font:inherit;font-size:.92rem;min-height:36px}
+input:focus-visible{outline:2px solid #ffb547;outline-offset:0}
+#title{width:260px}
+#author{width:180px}
+.yr span{display:flex;align-items:center;gap:8px}
+.yr input[type=checkbox]{width:16px;height:16px;accent-color:#ffb547}
+#year{width:88px}
+.tools{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:16px}
+#q{width:220px}
+.chips{display:inline-flex;flex-wrap:wrap;gap:6px}
+.chip{border:1px solid rgba(255,255,255,.14);background:#171a21;color:rgba(255,255,255,.66);border-radius:999px;padding:4px 12px;font-size:.85rem;cursor:pointer}
+.chip.on{background:rgba(255,181,71,.14);color:#ffb547;border-color:transparent}
+.ghost{border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:#fff;border-radius:9px;padding:6px 12px;font-size:.85rem;cursor:pointer}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,240px),1fr));gap:10px}
+.card{display:grid;grid-template-columns:auto auto minmax(0,1fr);gap:2px 10px;align-items:center;padding:12px;border-radius:12px;border:1px solid rgba(255,255,255,.09);background:#171a21;cursor:pointer;transition:border-color .15s,background-color .15s}
+.card .check{width:18px;height:18px;border-radius:50%;border:1.5px solid rgba(255,255,255,.3);display:grid;place-items:center;font-size:11px;color:transparent}
+.card img{width:36px;height:36px;border-radius:8px}
+.card .nm{font-weight:600;color:#fff;font-size:.95rem;overflow-wrap:anywhere}
+.card .days{grid-column:2/4;color:rgba(255,255,255,.5);font-size:.78rem}
+.card .grp,.card .note{display:none;grid-column:1/4;width:100%;margin-top:8px;font-size:.85rem}
+.card.on{border-color:rgba(255,181,71,.6);background:rgba(255,181,71,.07)}
+.card.on .check{background:#ffb547;border-color:#ffb547;color:#241503}
+.card.on .grp,.card.on .note{display:block}
+.hint{color:rgba(255,255,255,.5);font-size:.85rem;margin-top:18px}
+.toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%) translateY(20px);background:#20242e;border:1px solid rgba(255,255,255,.16);color:#fff;padding:10px 18px;border-radius:10px;opacity:0;pointer-events:none;transition:opacity .2s,transform .2s;max-width:calc(100% - 48px)}
+.toast.show{opacity:1;transform:translateX(-50%)}
+.done{position:fixed;inset:0;display:none;place-items:center;background:rgba(12,14,18,.94);z-index:20;text-align:center}
+.done.show{display:grid}
+.done h2{color:#fff;margin:0 0 8px}
+.done p{color:rgba(255,255,255,.66)}
+</style>
+</head>
+<body>
+<header class="bar"><div class="wrap bar-in">
+<h1>挑选要推荐的软件</h1>
+<span class="count" id="count"></span>
+<button class="save" id="save">保存并继续</button>
+</div></header>
+<main class="wrap">
+<section class="panel">
+<label>海报标题<input id="title" type="text" maxlength="34"></label>
+<label class="yr">含年份<span><input type="checkbox" id="useYear"><input id="year" type="number" min="1900" max="2200"></span></label>
+<label>署名（可选）<input id="author" type="text" maxlength="40" placeholder="印在海报左下角"></label>
+</section>
+<section class="tools">
+<input id="q" type="search" placeholder="搜索软件名">
+<span class="chips" id="chips"></span>
+<button class="ghost" id="top">选中前 24 个活跃候选</button>
+<button class="ghost" id="clear">清空</button>
+</section>
+<section class="grid" id="grid"></section>
+<p class="hint">勾选、分组和理由只写入本机 selection.json，保存前不会发送任何网络请求。保存后请回到助手，让它继续生成海报。</p>
+</main>
+<datalist id="groups"></datalist>
+<div class="toast" id="toast"></div>
+<div class="done" id="done"><div><h2>已保存选择</h2><p>可以关闭此页面，回到助手继续生成海报。</p></div></div>
+<script>
+var DATA = ${data};
+var TOKEN = ${JSON.stringify(token)};
+var state = new Map();
+var byId = {};
+DATA.apps.forEach(function(a){ byId[a.id] = a; });
+DATA.selected.forEach(function(s){
+  var a = byId[s.id];
+  if (a) state.set(a.index, { group: s.group || a.group, note: s.note || '' });
+});
+function esc(s){ return String(s).replace(/[&<>"]/g, function(c){ return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+var toastTimer;
+function toast(msg){
+  var el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function(){ el.classList.remove('show'); }, 2600);
+}
+function updateCount(){ document.getElementById('count').textContent = '已选 ' + state.size + ' / 48'; }
+var grid = document.getElementById('grid');
+var cards = [];
+DATA.apps.forEach(function(app){
+  var sel = state.get(app.index);
+  var card = document.createElement('div');
+  card.className = 'card' + (sel ? ' on' : '');
+  var img = document.createElement('img');
+  img.src = '/icon/' + app.index + '.png?token=' + TOKEN;
+  img.alt = '';
+  img.loading = 'lazy';
+  img.addEventListener('error', function(){ img.style.visibility = 'hidden'; });
+  card.innerHTML = '<span class="check">✓</span>'
+    + '<span class="nm">' + esc(app.name) + '</span>'
+    + '<span class="days">' + (app.activeDays > 0 ? '近半年活跃 ' + app.activeDays + ' 天' : '无活跃记录') + '</span>'
+    + '<input class="grp" type="text" list="groups" maxlength="14" placeholder="分类" value="' + esc(sel ? sel.group : app.group) + '">'
+    + '<input class="note" type="text" maxlength="60" placeholder="推荐理由（可选，60 字内）" value="' + esc(sel ? sel.note : '') + '">';
+  card.insertBefore(img, card.children[1]);
+  card.addEventListener('click', function(ev){
+    if (ev.target.tagName === 'INPUT') return;
+    toggle(app.index);
+  });
+  card.querySelector('.grp').addEventListener('input', function(ev){
+    var s = state.get(app.index);
+    if (s) s.group = ev.target.value;
+  });
+  card.querySelector('.note').addEventListener('input', function(ev){
+    var s = state.get(app.index);
+    if (s) s.note = ev.target.value;
+  });
+  grid.appendChild(card);
+  cards.push({ app: app, el: card });
+});
+function toggle(i){
+  var c = cards[i];
+  if (state.has(i)) {
+    state.delete(i);
+    c.el.classList.remove('on');
+  } else {
+    if (state.size >= 48) { toast('最多选择 48 款软件。'); return; }
+    state.set(i, { group: c.el.querySelector('.grp').value.trim() || c.app.group, note: c.el.querySelector('.note').value.trim() });
+    c.el.classList.add('on');
+  }
+  updateCount();
+}
+var filterGroup = '';
+function applyFilter(){
+  var q = document.getElementById('q').value.trim().toLowerCase();
+  cards.forEach(function(c){
+    var show = (!q || c.app.name.toLowerCase().indexOf(q) >= 0) && (!filterGroup || c.app.group === filterGroup);
+    c.el.style.display = show ? '' : 'none';
+  });
+}
+document.getElementById('q').addEventListener('input', applyFilter);
+var chipsEl = document.getElementById('chips');
+var groupsOrder = [];
+var counts = {};
+DATA.apps.forEach(function(a){
+  if (!(a.group in counts)) { counts[a.group] = 0; groupsOrder.push(a.group); }
+  counts[a.group]++;
+});
+function markChips(active){
+  Array.prototype.forEach.call(chipsEl.children, function(c){ c.classList.toggle('on', c === active); });
+}
+var allChip = document.createElement('button');
+allChip.className = 'chip on';
+allChip.textContent = '全部';
+allChip.addEventListener('click', function(){ filterGroup = ''; markChips(allChip); applyFilter(); });
+chipsEl.appendChild(allChip);
+groupsOrder.forEach(function(g){
+  var b = document.createElement('button');
+  b.className = 'chip';
+  b.textContent = g + ' ' + counts[g];
+  b.addEventListener('click', function(){ filterGroup = g; markChips(b); applyFilter(); });
+  chipsEl.appendChild(b);
+});
+var dl = document.getElementById('groups');
+groupsOrder.forEach(function(g){
+  var o = document.createElement('option');
+  o.value = g;
+  dl.appendChild(o);
+});
+document.getElementById('top').addEventListener('click', function(){
+  var n = 0;
+  DATA.apps.forEach(function(app){
+    if (n < 24 && app.activeDays > 0 && !state.has(app.index)) {
+      state.set(app.index, { group: app.group, note: '' });
+      cards[app.index].el.classList.add('on');
+      n++;
+    }
+  });
+  updateCount();
+});
+document.getElementById('clear').addEventListener('click', function(){
+  state.clear();
+  cards.forEach(function(c){ c.el.classList.remove('on'); });
+  updateCount();
+});
+document.getElementById('title').value = DATA.title;
+document.getElementById('year').value = DATA.year || new Date().getFullYear();
+document.getElementById('useYear').checked = DATA.year > 0;
+document.getElementById('author').value = DATA.author;
+document.getElementById('save').addEventListener('click', function(){
+  var title = document.getElementById('title').value.trim();
+  if (!title) { toast('请填写海报标题。'); return; }
+  if (state.size < 1) { toast('请至少选择 1 款软件。'); return; }
+  var groups = {};
+  var chosen = [];
+  DATA.apps.forEach(function(app){
+    var s = state.get(app.index);
+    if (!s) return;
+    var g = s.group.trim() || app.group;
+    groups[g] = true;
+    chosen.push({ index: app.index, group: g, note: s.note.trim() });
+  });
+  if (Object.keys(groups).length > 7) { toast('分类最多 7 个，请合并一些。'); return; }
+  var body = {
+    title: title,
+    year: document.getElementById('useYear').checked ? Number(document.getElementById('year').value) : 0,
+    author: document.getElementById('author').value.trim(),
+    apps: chosen
+  };
+  var btn = document.getElementById('save');
+  btn.disabled = true;
+  fetch('/save?token=' + TOKEN, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+    .then(function(r){ return r.json(); })
+    .then(function(r){
+      if (r.ok) { document.getElementById('done').className = 'done show'; }
+      else { btn.disabled = false; toast(r.error || '保存失败。'); }
+    })
+    .catch(function(){ btn.disabled = false; toast('网络错误，请重试。'); });
+});
+updateCount();
+</script>
+</body>
+</html>`;
+}
 const shareId = (id) => /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(id) ? id : undefined;
 
 async function render(values) {
@@ -307,14 +634,14 @@ async function revoke(values) {
 async function main() {
   const [command, ...args] = process.argv.slice(2);
   if (command === 'help' || !command) {
-    console.log('scan --dir 目录 [--root 附加应用目录]\nrender --input selection.json --out 成图.png [--style desktop|night|minimal] [--wallpaper 图片]\npublish --image 成图.png --name 署名 --visibility link|public\nrevoke --receipt 成图.png.share.json');
+    console.log('scan --dir 目录 [--root 附加应用目录]\npick --dir 目录    打开本机挑选页，勾选软件、分组和推荐理由后写回 selection.json\nrender --input selection.json --out 成图.png [--style desktop|night|minimal] [--wallpaper 图片]\npublish --image 成图.png --name 署名 --visibility link|public\nrevoke --receipt 成图.png.share.json');
     return;
   }
   if (process.platform !== 'darwin') throw new Error('制作需要从 macOS 本机运行。');
   const options = Object.fromEntries(['dir','input','out','style','wallpaper','name','image','visibility','receipt'].map(name => [name, {type:'string'}]));
   options.root = {type:'string', multiple:true};
   const { values } = parseArgs({ args, options });
-  const handler = { scan, render, publish, revoke }[command];
+  const handler = { scan, pick, render, publish, revoke }[command];
   if (!handler) throw new Error('未知命令：' + command);
   await handler(values);
 }
