@@ -10,7 +10,22 @@ import { promisify, parseArgs } from 'node:util';
 const exec = promisify(execFile);
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const defaults = ['/Applications', join(homedir(), 'Applications'), '/System/Applications'];
-const shareEndpoint = 'https://software.qiaomu.ai/api/v1/shares';
+// QIAOMU_SOFTWARE_ORIGIN lets maintainers test against a local copy of the site; it only accepts https or loopback http.
+function siteOrigin() {
+  const value = process.env.QIAOMU_SOFTWARE_ORIGIN;
+  if (!value) return 'https://software.qiaomu.ai';
+  const url = URL.canParse(value) ? new URL(value) : null;
+  if (!url || (url.protocol !== 'https:' && !(url.protocol === 'http:' && ['127.0.0.1', 'localhost'].includes(url.hostname)))) {
+    throw new Error('QIAOMU_SOFTWARE_ORIGIN 只接受 https 或本机 http 地址。');
+  }
+  return url.origin;
+}
+const shareEndpoint = () => siteOrigin() + '/api/v1/shares';
+const lookupEndpoint = () => siteOrigin() + '/api/v1/icons/lookup';
+const iconSize = 128;
+const maxIconBytes = 64 * 1024;
+const maxIconTotal = 1536 * 1024;
+const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const localDay = (value) => {
   const date = new Date(value);
   return [date.getFullYear(), date.getMonth() + 1, date.getDate()]
@@ -146,22 +161,48 @@ async function readSelection(filename) {
   const input = JSON.parse(await readFile(filename, 'utf8'));
   if (!Array.isArray(input.apps) || input.apps.length < 1 || input.apps.length > 48) throw new Error('请选择 1–48 个应用。');
   const title = str(input.title, '标题', 34);
-  const year = Number(input.year ?? new Date().getFullYear());
-  if (!Number.isInteger(year) || year < 1900 || year > 2200) throw new Error('年份无效。');
+  const year = input.year === null || input.year === false ? 0 : Number(input.year ?? new Date().getFullYear());
+  if (year !== 0 && (!Number.isInteger(year) || year < 1900 || year > 2200)) throw new Error('年份无效。');
   const ids = new Set();
   const groups = new Set();
-  const apps = input.apps.map(({ id, path, name, group }) => {
+  const apps = input.apps.map(({ id, path, name, group, note }) => {
     id = str(id, '应用 ID', 128);
     group = str(group, '分类', 14);
     if (!isAbsolute(path ?? '') || !path.toLowerCase().endsWith('.app')) throw new Error('应用路径必须指向本机 .app。');
     if (ids.has(id)) throw new Error('应用重复：' + id);
     ids.add(id);
     groups.add(group);
-    return { id, path, name: str(name, '应用名称', 60), group };
+    const app = { id, path, name: str(name, '应用名称', 60), group };
+    if (note !== undefined && note !== null && String(note).trim()) app.note = str(note, '推荐理由', 60);
+    return app;
   });
   if (groups.size > 7) throw new Error('最多使用七个分类。');
-  return { title, year, apps };
+  const author = input.author ? str(input.author, '署名', 40) : '';
+  return { title, year, author, apps };
 }
+
+// Writes each selected app's 128px icon next to the poster, named by its SHA-256 so the site can deduplicate.
+async function exportIcons(apps, folder) {
+  await mkdir(folder, { recursive: true });
+  const temporary = await mkdtemp(join(folder, '.export-'));
+  try {
+    const list = apps.map((app, index) => ({ path: app.path, file: index + '.png' }));
+    await exec('/usr/bin/osascript', ['-l', 'JavaScript', join(scriptDir, 'icons.js'), JSON.stringify(list), temporary, String(iconSize)], { timeout: 45000 });
+    const hashes = [];
+    for (const { file } of list) {
+      const bytes = await readFile(join(temporary, file)).catch(() => null);
+      if (!bytes || bytes.length > maxIconBytes) { hashes.push(null); continue; }
+      const hash = sha256(bytes);
+      await writeFile(join(folder, hash + '.png'), bytes, { mode: 0o600 });
+      hashes.push(hash);
+    }
+    return hashes;
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
+}
+
+const shareId = (id) => /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(id) ? id : undefined;
 
 async function render(values) {
   const selectionPath = resolve(values.input ?? 'selection.json');
@@ -182,41 +223,71 @@ async function render(values) {
     const candidate = join(temporary, 'poster.png');
     const { stdout } = await exec('/usr/bin/osascript', ['-l', 'JavaScript', join(scriptDir, 'render.js'),
       JSON.stringify(selection), candidate, style, wallpaper], { timeout: 45000 });
-    const sha256 = createHash('sha256').update(await readFile(candidate)).digest('hex');
+    const digest = sha256(await readFile(candidate));
+    const iconFolder = file + '.icons';
+    const icons = await exportIcons(selection.apps, iconFolder).catch(() => selection.apps.map(() => null));
     await copyFile(candidate, file, constants.COPYFILE_EXCL);
     try {
-      await saveJson(manifest, { title: selection.title, apps: selection.apps.map(({name, group}) => ({ name, group })),
-        sha256, publishKey: randomBytes(32).toString('hex') });
+      const apps = selection.apps.map(({ name, group, id, note }, index) => ({ name, group,
+        ...(shareId(id) ? { id } : {}), ...(note ? { note } : {}), ...(icons[index] ? { icon: icons[index] } : {}) }));
+      await saveJson(manifest, { title: selection.title, ...(selection.author ? { author: selection.author } : {}), apps, sha256: digest, publishKey: randomBytes(32).toString('hex') });
     } catch (error) {
       await rm(file);
       throw error;
     }
-    console.log(JSON.stringify({ ...JSON.parse(stdout), image: file }));
+    console.log(JSON.stringify({ ...JSON.parse(stdout), image: file, icons: icons.filter(Boolean).length,
+      notes: selection.apps.filter(app => app.note).length }));
   } finally {
     await rm(temporary, { recursive: true, force: true });
   }
 }
 
 async function publish(values) {
-  if (!values.image || !values.name || !['link', 'public'].includes(values.visibility)) {
+  if (!values.image || !['link', 'public'].includes(values.visibility)) {
     throw new Error('发布需要 --image、--name 和 --visibility link|public。请先预览并确认。');
   }
   const image = resolve(values.image);
   const manifest = JSON.parse(await readFile(image + '.json', 'utf8'));
-  const name = str(values.name, '分享名', 40);
+  if (!values.name && !manifest.author) throw new Error('发布需要 --name 分享名。');
+  const name = str(values.name ?? manifest.author, '分享名', 40);
   const receipt = image + '.share.json';
   if (await isFile(receipt)) throw new Error('已有分享凭证：' + receipt + '。要重新发布，请先另存一张成图。');
   if ((await stat(image)).size > 8 * 1024 * 1024) throw new Error('图片超过 8 MiB。');
   const png = await readFile(image);
   if (manifest.sha256 !== createHash('sha256').update(png).digest('hex')) throw new Error('成图与预览清单不一致，请重新生成。');
   if (!/^[a-f0-9]{64}$/.test(manifest.publishKey ?? '')) throw new Error('预览清单缺少上传编号，请重新生成。');
-  const response = await fetch(shareEndpoint, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(30000),
+  const icons = await missingIcons(image + '.icons', manifest.apps);
+  const response = await fetch(shareEndpoint(), { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(60000),
     headers: { 'content-type': 'application/json', 'idempotency-key': manifest.publishKey },
-    body: JSON.stringify({ name, title: manifest.title, visibility: values.visibility, apps: manifest.apps, image: png.toString('base64') }) });
+    body: JSON.stringify({ name, title: manifest.title, visibility: values.visibility, apps: manifest.apps,
+      ...(Object.keys(icons).length ? { icons } : {}), image: png.toString('base64') }) });
   const result = await response.json();
   if (!response.ok) throw new Error(result.error ?? '发布失败。');
   await saveJson(receipt, result);
-  console.log(JSON.stringify({ url: result.url, visibility: result.visibility, receipt }));
+  console.log(JSON.stringify({ url: result.url, visibility: result.visibility, receipt, iconsUploaded: Object.keys(icons).length }));
+}
+
+// Asks the site which icon fingerprints it lacks and returns only those files. Any failure means no icons are sent;
+// the site then shows a placeholder or an icon other posters already uploaded.
+async function missingIcons(folder, apps) {
+  const hashes = [...new Set((apps ?? []).map(app => app.icon).filter(hash => /^[a-f0-9]{64}$/.test(hash ?? '')))];
+  if (!hashes.length) return {};
+  try {
+    const response = await fetch(lookupEndpoint(), { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(15000),
+      headers: { 'content-type': 'application/json' }, body: JSON.stringify({ hashes }) });
+    if (!response.ok) return {};
+    const { missing } = await response.json();
+    const icons = {};
+    let total = 0;
+    for (const hash of Array.isArray(missing) ? missing : []) {
+      if (!hashes.includes(hash)) continue;
+      const bytes = await readFile(join(folder, hash + '.png')).catch(() => null);
+      if (!bytes || sha256(bytes) !== hash || total + bytes.length > maxIconTotal) continue;
+      total += bytes.length;
+      icons[hash] = bytes.toString('base64');
+    }
+    return icons;
+  } catch { return {}; }
 }
 
 async function revoke(values) {
@@ -225,7 +296,7 @@ async function revoke(values) {
   if (!/^[a-f0-9]{24}$/.test(receipt.id ?? '') || !/^[a-f0-9]{64}$/.test(receipt.removeToken ?? '')) {
     throw new Error('撤回凭证无效。');
   }
-  const response = await fetch(shareEndpoint + '/' + receipt.id, {
+  const response = await fetch(shareEndpoint() + '/' + receipt.id, {
     method: 'DELETE', redirect: 'error', signal: AbortSignal.timeout(15000),
     headers: { authorization: 'Bearer ' + receipt.removeToken },
   });

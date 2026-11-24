@@ -9,7 +9,7 @@ compatibility:
     context: "inline"
     shell: "bash"
   permissions:
-    network: "Only software.qiaomu.ai after explicit confirmation of the poster, attribution and visibility"
+    network: "Only software.qiaomu.ai after explicit confirmation of the poster, attribution and visibility; uploads the poster, selected app names, categories, reasons, bundle IDs and missing 128px icons"
     file_write: "User output directory"
     subprocess: "Node.js, mdls, plutil and osascript"
     interactive: "Use the host AskUser component where available, or chat"

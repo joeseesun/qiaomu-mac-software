@@ -20,6 +20,7 @@ function attributes(fontName, size, color, shadow) {
   return attrs;
 }
 
+// centered: true centers on x, 'right' right-aligns to x, otherwise x is the left edge.
 function drawText(text, font, size, minimum, maxWidth, x, y, centered, color, shadow) {
   let attrs = attributes(font, size, color, shadow);
   let measured = $(text).sizeWithAttributes(attrs).width;
@@ -34,7 +35,8 @@ function drawText(text, font, size, minimum, maxWidth, x, y, centered, color, sh
     text = letters.join('') + '…';
     measured = $(text).sizeWithAttributes(attrs).width;
   }
-  $(text).drawAtPointWithAttributes($.NSMakePoint(centered ? x - measured / 2 : x, y), attrs);
+  const left = centered === 'right' ? x - measured : centered ? x - measured / 2 : x;
+  $(text).drawAtPointWithAttributes($.NSMakePoint(left, y), attrs);
 }
 
 function wallpaperFor(workspace, override) {
@@ -97,7 +99,8 @@ function run(argv) {
   const width = 1200;
   const rows = grouped(selection.apps);
   const rowHeight = rows.length <= 5 ? Math.min(111, Math.floor(498 / rows.length)) : 90;
-  const height = Math.max(675, 159 + rows.length * rowHeight);
+  const footer = 34;
+  const height = Math.max(675, 159 + footer + rows.length * rowHeight);
   const bitmap = $.NSBitmapImageRep.alloc.initWithBitmapDataPlanesPixelsWidePixelsHighBitsPerSampleSamplesPerPixelHasAlphaIsPlanarColorSpaceNameBytesPerRowBitsPerPixel(
     null, width * 2, height * 2, 8, 4, true, false, $.NSDeviceRGBColorSpace, 0, 0
   );
@@ -113,7 +116,13 @@ function run(argv) {
   const labelWidth = 148;
   const step = (width - labelWidth - 96) / columns;
   const iconSize = Math.min(64, rowHeight * .62);
-  drawText(String(selection.year) + '  ' + selection.title, 'STSongti-SC-Bold', 53, 32, 1096, 48, height - 111, false, white, true);
+  // Titles that already name a year (e.g. "2026 AI 开发工作台") are drawn as-is so the year is not doubled.
+  const hasYear = /(^|[^0-9])(19|20|21)[0-9]{2}([^0-9]|$)/.test(selection.title);
+  const heading = selection.year && !hasYear ? String(selection.year) + '  ' + selection.title : selection.title;
+  drawText(heading, 'STSongti-SC-Bold', 53, 32, 1096, 48, height - 111, false, white, true);
+  const quiet = rgb(.997, .986, .959, .72);
+  drawText('software.qiaomu.ai', 'AvenirNext-Medium', 14, 11, 260, width - 48, 24, 'right', quiet, true);
+  if (selection.author) drawText(selection.author + (/[A-Za-z0-9]$/.test(selection.author) ? ' ' : '') + '的推荐', 'PingFangSC-Medium', 15, 11, 520, 48, 23, false, quiet, true);
   rows.forEach((row, index) => {
     const top = height - 137 - index * rowHeight;
     drawText(row.label, 'STSongti-SC-Bold', 23, 13, labelWidth - 16, 48, top - 45, false, white, true);
