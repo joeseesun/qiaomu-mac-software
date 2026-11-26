@@ -66,11 +66,13 @@ async function appPaths(root, depth = 0) {
   return results;
 }
 
+const ROLES = ['独立开发者', '全栈开发', '前端开发', '后端开发', 'AI 工程师', '设计师', '产品经理', '内容创作者', '效率极客', '学生'];
+
 function inferredGroup(name) {
-  if (/codex|chatgpt|claude|deepseek|doubao|豆包|gemini|antigravity|workbuddy|qoder|cursor|t3 code|factory|zcode|xcode|visual studio|terminal|iterm|cmux/i.test(name)) return 'AI 与开发';
-  if (/chrome|firefox|safari|wechat|微信|lark|飞书|telegram|edge|会议|ego lite|flclash|slack/i.test(name)) return '浏览与沟通';
-  if (/obsidian|sublime|\bword\b|powerpoint|notion|pages|excel|notes|备忘录|anki|keynote|typora/i.test(name)) return '写作与办公';
-  if (/studio|capwise|photos|final cut|录|shot|subcast|figma|sketch|pixelmator/i.test(name)) return '创作';
+  if (/codex|chatgpt|claude|deepseek|doubao|豆包|kimi|gemini|antigravity|workbuddy|qoder|cursor|t3 code|factory|zcode|xcode|visual studio|zed|sublime|terminal|iterm|ghostty|warp|wezterm|kitty|alacritty|cmux|orbstack|docker|tableplus|proxyman|bruno|postman|fork|tower|ollama|lm studio|cherry studio|jetbrains|webstorm|pycharm|intellij|goland|datagrip/i.test(name)) return 'AI 与开发';
+  if (/chrome|firefox|safari|arc|zen|dia|brave|wechat|微信|lark|飞书|dingtalk|钉钉|telegram|edge|会议|ego lite|flclash|clash|surge|tailscale|slack|discord/i.test(name)) return '浏览与沟通';
+  if (/obsidian|\bword\b|powerpoint|notion|pages|excel|notes|备忘录|anki|keynote|typora|bear|heptabase|logseq|craft|ulysses|ia writer|wps|xmind|reeder|netnewswire|readwise|ticktick|滴答|todoist|things|linear|fantastical/i.test(name)) return '写作与办公';
+  if (/studio|capwise|photos|final cut|davinci|blender|录|shot|pixpin|snipaste|kap|subcast|figma|sketch|pixelmator|iina|infuse|vlc|spotify|音乐|downie|permute|handbrake/i.test(name)) return '创作';
   return '效率与工具';
 }
 
@@ -182,7 +184,8 @@ async function readSelection(filename) {
   });
   if (groups.size > 7) throw new Error('最多使用七个分类。');
   const author = input.author ? str(input.author, '署名', 40) : '';
-  return { title, year, author, apps };
+  const role = input.role ? str(input.role, '身份标签', 16) : '';
+  return { title, year, author, role, apps };
 }
 
 // Writes each selected app's 128px icon next to the poster, named by its SHA-256 so the site can deduplicate.
@@ -225,6 +228,8 @@ async function pick(values) {
     title: typeof previous.title === 'string' ? previous.title : '我推荐的 Mac 软件',
     year: previous.year === null || previous.year === false ? 0 : (Number(previous.year) || new Date().getFullYear()),
     author: typeof previous.author === 'string' ? previous.author : '',
+    role: typeof previous.role === 'string' ? previous.role : '',
+    roles: ROLES,
     apps: apps.map((app, index) => ({ index, id: app.id, name: app.name, group: app.group, activeDays: app.activeDays ?? 0 })),
     selected: Array.isArray(previous.apps) ? previous.apps.map(app => ({ id: app.id, group: app.group, note: app.note ?? '' })) : [],
   };
@@ -268,12 +273,14 @@ async function pick(values) {
           const selection = { title: String(input.title ?? '').trim() || '我推荐的 Mac 软件',
             year: Number(input.year) > 0 ? Number(input.year) : null,
             ...(String(input.author ?? '').trim() ? { author: String(input.author).trim() } : {}),
+            ...(String(input.role ?? '').trim() ? { role: String(input.role).trim() } : {}),
             apps: chosen };
           const temp = join(dir, '.selection-check.json');
           await writeFile(temp, JSON.stringify(selection));
           const checked = await readSelection(temp).finally(() => rm(temp, { force: true }));
           const finalSelection = { title: checked.title, year: checked.year || null,
-            ...(checked.author ? { author: checked.author } : {}), apps: checked.apps };
+            ...(checked.author ? { author: checked.author } : {}),
+            ...(checked.role ? { role: checked.role } : {}), apps: checked.apps };
           await writeFile(join(dir, 'selection.json'), JSON.stringify(finalSelection, null, 2) + '\n', { mode: 0o600 });
           res.writeHead(200, { 'content-type': 'application/json' });
           res.end(JSON.stringify({ ok: true, apps: checked.apps.length }));
@@ -360,7 +367,9 @@ input:focus-visible{outline:2px solid #ffb547;outline-offset:0}
 <label>海报标题<input id="title" type="text" maxlength="34"></label>
 <label class="yr">含年份<span><input type="checkbox" id="useYear"><input id="year" type="number" min="1900" max="2200"></span></label>
 <label>署名（可选）<input id="author" type="text" maxlength="40" placeholder="印在海报左下角"></label>
+<label>身份标签（可选）<input id="role" type="text" maxlength="16" list="roles" placeholder="如：独立开发者、设计师"></label>
 </section>
+<datalist id="roles"></datalist>
 <section class="tools">
 <input id="q" type="search" placeholder="搜索软件名">
 <span class="chips" id="chips"></span>
@@ -392,7 +401,11 @@ function toast(msg){
   clearTimeout(toastTimer);
   toastTimer = setTimeout(function(){ el.classList.remove('show'); }, 2600);
 }
-function updateCount(){ document.getElementById('count').textContent = '已选 ' + state.size + ' / 48'; }
+function updateCount(){
+  var notes = 0;
+  state.forEach(function(s){ if (s.note && s.note.trim()) notes++; });
+  document.getElementById('count').textContent = '已选 ' + state.size + ' / 48' + (notes ? ' · 已写 ' + notes + ' 条理由' : '');
+}
 var grid = document.getElementById('grid');
 var cards = [];
 DATA.apps.forEach(function(app){
@@ -420,7 +433,7 @@ DATA.apps.forEach(function(app){
   });
   card.querySelector('.note').addEventListener('input', function(ev){
     var s = state.get(app.index);
-    if (s) s.note = ev.target.value;
+    if (s) { s.note = ev.target.value; updateCount(); }
   });
   grid.appendChild(card);
   cards.push({ app: app, el: card });
@@ -494,6 +507,9 @@ document.getElementById('title').value = DATA.title;
 document.getElementById('year').value = DATA.year || new Date().getFullYear();
 document.getElementById('useYear').checked = DATA.year > 0;
 document.getElementById('author').value = DATA.author;
+document.getElementById('role').value = DATA.role || '';
+var roleDl = document.getElementById('roles');
+(DATA.roles || []).forEach(function(r){ var o = document.createElement('option'); o.value = r; roleDl.appendChild(o); });
 document.getElementById('save').addEventListener('click', function(){
   var title = document.getElementById('title').value.trim();
   if (!title) { toast('请填写海报标题。'); return; }
@@ -512,6 +528,7 @@ document.getElementById('save').addEventListener('click', function(){
     title: title,
     year: document.getElementById('useYear').checked ? Number(document.getElementById('year').value) : 0,
     author: document.getElementById('author').value.trim(),
+    role: document.getElementById('role').value.trim(),
     apps: chosen
   };
   var btn = document.getElementById('save');
@@ -557,7 +574,14 @@ async function render(values) {
     try {
       const apps = selection.apps.map(({ name, group, id, note }, index) => ({ name, group,
         ...(shareId(id) ? { id } : {}), ...(note ? { note } : {}), ...(icons[index] ? { icon: icons[index] } : {}) }));
-      await saveJson(manifest, { title: selection.title, ...(selection.author ? { author: selection.author } : {}), apps, sha256: digest, publishKey: randomBytes(32).toString('hex') });
+      await saveJson(manifest, {
+        title: selection.title,
+        ...(selection.author ? { author: selection.author } : {}),
+        ...(selection.role ? { role: selection.role } : {}),
+        apps,
+        sha256: digest,
+        publishKey: randomBytes(32).toString('hex'),
+      });
     } catch (error) {
       await rm(file);
       throw error;
@@ -577,8 +601,9 @@ async function publish(values) {
   const manifest = JSON.parse(await readFile(image + '.json', 'utf8'));
   if (!values.name && !manifest.author) throw new Error('发布需要 --name 分享名。');
   const name = str(values.name ?? manifest.author, '分享名', 40);
+  const role = values.role ? str(values.role, '身份标签', 16) : (manifest.role ? str(manifest.role, '身份标签', 16) : '');
   const receipt = image + '.share.json';
-  if (await isFile(receipt)) throw new Error('已有分享凭证：' + receipt + '。要重新发布，请先另存一张成图。');
+  if (await isFile(receipt)) throw new Error('已有分享凭证：' + receipt + '。要原地更新，请改用 update --receipt；要发布为新链接，请另存成图。');
   if ((await stat(image)).size > 8 * 1024 * 1024) throw new Error('图片超过 8 MiB。');
   const png = await readFile(image);
   if (manifest.sha256 !== createHash('sha256').update(png).digest('hex')) throw new Error('成图与预览清单不一致，请重新生成。');
@@ -586,12 +611,43 @@ async function publish(values) {
   const icons = await missingIcons(image + '.icons', manifest.apps);
   const response = await fetch(shareEndpoint(), { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(60000),
     headers: { 'content-type': 'application/json', 'idempotency-key': manifest.publishKey },
-    body: JSON.stringify({ name, title: manifest.title, visibility: values.visibility, apps: manifest.apps,
+    body: JSON.stringify({ name, title: manifest.title, ...(role ? { role } : {}), visibility: values.visibility, apps: manifest.apps,
       ...(Object.keys(icons).length ? { icons } : {}), image: png.toString('base64') }) });
   const result = await response.json();
   if (!response.ok) throw new Error(result.error ?? '发布失败。');
   await saveJson(receipt, result);
   console.log(JSON.stringify({ url: result.url, visibility: result.visibility, receipt, iconsUploaded: Object.keys(icons).length }));
+}
+
+async function update(values) {
+  if (!values.receipt || !values.image) {
+    throw new Error('原地更新需要 --receipt 指向既有分享凭证，以及 --image 指向新成图。');
+  }
+  const receiptPath = resolve(values.receipt);
+  const receipt = JSON.parse(await readFile(receiptPath, 'utf8'));
+  if (!/^[a-f0-9]{24}$/.test(receipt.id ?? '') || !/^[a-f0-9]{64}$/.test(receipt.removeToken ?? '')) {
+    throw new Error('分享凭证无效。');
+  }
+  const image = resolve(values.image);
+  const manifest = JSON.parse(await readFile(image + '.json', 'utf8'));
+  const visibility = values.visibility ?? receipt.visibility ?? 'public';
+  if (!['link', 'public'].includes(visibility)) throw new Error('可见范围需为 link 或 public。');
+  const name = str(values.name ?? manifest.author, '分享名', 40);
+  const role = values.role !== undefined ? (values.role ? str(values.role, '身份标签', 16) : '') : (manifest.role ? str(manifest.role, '身份标签', 16) : '');
+  if ((await stat(image)).size > 8 * 1024 * 1024) throw new Error('图片超过 8 MiB。');
+  const png = await readFile(image);
+  if (manifest.sha256 !== createHash('sha256').update(png).digest('hex')) throw new Error('成图与预览清单不一致，请重新生成。');
+  const icons = await missingIcons(image + '.icons', manifest.apps);
+  const response = await fetch(shareEndpoint() + '/' + receipt.id, {
+    method: 'PUT', redirect: 'error', signal: AbortSignal.timeout(60000),
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + receipt.removeToken },
+    body: JSON.stringify({ name, title: manifest.title, ...(role ? { role } : {}), visibility, apps: manifest.apps,
+      ...(Object.keys(icons).length ? { icons } : {}), image: png.toString('base64') }),
+  });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error ?? '更新失败。');
+  await writeFile(receiptPath, JSON.stringify({ ...receipt, visibility: result.visibility, url: result.url }, null, 2) + '\n', { mode: 0o600 });
+  console.log(JSON.stringify({ url: result.url, visibility: result.visibility, updated: true, receipt: receiptPath, iconsUploaded: Object.keys(icons).length }));
 }
 
 // Asks the site which icon fingerprints it lacks and returns only those files. Any failure means no icons are sent;
@@ -634,14 +690,14 @@ async function revoke(values) {
 async function main() {
   const [command, ...args] = process.argv.slice(2);
   if (command === 'help' || !command) {
-    console.log('scan --dir 目录 [--root 附加应用目录]\npick --dir 目录    打开本机挑选页，勾选软件、分组和推荐理由后写回 selection.json\nrender --input selection.json --out 成图.png [--style desktop|night|minimal] [--wallpaper 图片]\npublish --image 成图.png --name 署名 --visibility link|public\nrevoke --receipt 成图.png.share.json');
+    console.log('scan --dir 目录 [--root 附加应用目录]\npick --dir 目录    打开本机挑选页，勾选软件、分组、身份标签和推荐理由后写回 selection.json\nrender --input selection.json --out 成图.png [--style desktop|night|minimal] [--wallpaper 图片]\npublish --image 成图.png --name 署名 [--role 身份] --visibility link|public\nupdate --receipt 旧凭证.share.json --image 新成图.png [--name 署名] [--role 身份] [--visibility link|public]\nrevoke --receipt 成图.png.share.json');
     return;
   }
   if (process.platform !== 'darwin') throw new Error('制作需要从 macOS 本机运行。');
-  const options = Object.fromEntries(['dir','input','out','style','wallpaper','name','image','visibility','receipt'].map(name => [name, {type:'string'}]));
+  const options = Object.fromEntries(['dir','input','out','style','wallpaper','name','role','image','visibility','receipt'].map(name => [name, {type:'string'}]));
   options.root = {type:'string', multiple:true};
   const { values } = parseArgs({ args, options });
-  const handler = { scan, pick, render, publish, revoke }[command];
+  const handler = { scan, pick, render, publish, update, revoke }[command];
   if (!handler) throw new Error('未知命令：' + command);
   await handler(values);
 }

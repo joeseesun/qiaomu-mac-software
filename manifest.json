@@ -1,8 +1,8 @@
 {
   "name": "qiaomu-mac-software",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "owner": "向阳乔木",
-  "updated_at": "2026-11-24",
+  "updated_at": "2026-11-26",
   "status": "active",
   "maturity_tier": "production",
   "target_platforms": [
